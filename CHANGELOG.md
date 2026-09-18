@@ -102,6 +102,7 @@ Docs: https://docs.openclaw.ai
 - Plugins/facades: guard bundled plugin facade loads with a cache-first sentinel so circular re-entry stops crashing `xai`, `sglang`, and `vllm` during gateway plugin startup. (#57508) Thanks @openperf.
 - Agents/MCP: dispose bundled MCP runtimes after one-shot `openclaw agent --local` runs finish, while preserving bundled MCP state across in-run retries so local JSON runs exit cleanly without restarting stateful MCP tools mid-run.
 - Gateway/OpenAI HTTP: restore default operator scopes for bearer-authenticated requests that omit `x-openclaw-scopes`, so headless `/v1/chat/completions` and session-history callers work again after the recent method-scope hardening. (#57596) Thanks @openperf.
+- Replies/image delivery: keep unsent `image_generate` media after successful block streaming instead of dropping the whole final payload, so captioned image replies still send the picture.
 
 ## 2026.3.28
 

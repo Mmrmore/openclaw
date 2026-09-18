@@ -163,24 +163,76 @@ describe("buildReplyPayloads media filter integration", () => {
     await expectSameTargetRepliesSuppressed({ provider: "lark", to: "ou_abc123" });
   });
 
-  it("drops all final payloads when block pipeline streamed successfully", async () => {
+  it("drops already-streamed text-only finals after successful block streaming", async () => {
     const pipeline: Parameters<typeof buildReplyPayloads>[0]["blockReplyPipeline"] = {
       didStream: () => true,
       isAborted: () => false,
-      hasSentPayload: () => false,
+      hasSentPayload: (payload) =>
+        payload.text === "response" && !payload.mediaUrl && !payload.mediaUrls,
       enqueue: () => {},
       flush: async () => {},
       stop: () => {},
       hasBuffered: () => false,
     };
-    // shouldDropFinalPayloads short-circuits to [] when the pipeline streamed
-    // without aborting, so hasSentPayload is never reached.
     const { replyPayloads } = await buildReplyPayloads({
       ...baseParams,
       blockStreamingEnabled: true,
       blockReplyPipeline: pipeline,
       replyToMode: "all",
       payloads: [{ text: "response", replyToId: "post-123" }],
+    });
+
+    expect(replyPayloads).toHaveLength(0);
+  });
+
+  it("preserves unsent image_generate media after the caption already streamed", async () => {
+    const pipeline: Parameters<typeof buildReplyPayloads>[0]["blockReplyPipeline"] = {
+      didStream: () => true,
+      isAborted: () => false,
+      hasSentPayload: (payload) =>
+        payload.text === "caption" && !payload.mediaUrl && !payload.mediaUrls?.length,
+      enqueue: () => {},
+      flush: async () => {},
+      stop: () => {},
+      hasBuffered: () => false,
+    };
+    const { replyPayloads } = await buildReplyPayloads({
+      ...baseParams,
+      blockStreamingEnabled: true,
+      blockReplyPipeline: pipeline,
+      replyToMode: "all",
+      payloads: [
+        {
+          text: "caption",
+          mediaUrls: ["/tmp/tool-image-generation/generated.png"],
+        },
+      ],
+    });
+
+    expect(replyPayloads).toHaveLength(1);
+    expect(replyPayloads[0]).toMatchObject({
+      text: undefined,
+      mediaUrls: ["/tmp/tool-image-generation/generated.png"],
+    });
+  });
+
+  it("does not resend media that the block pipeline already delivered", async () => {
+    const mediaUrls = ["/tmp/tool-image-generation/generated.png"];
+    const pipeline: Parameters<typeof buildReplyPayloads>[0]["blockReplyPipeline"] = {
+      didStream: () => true,
+      isAborted: () => false,
+      hasSentPayload: (payload) => payload.text === "caption" || Boolean(payload.mediaUrls?.length),
+      enqueue: () => {},
+      flush: async () => {},
+      stop: () => {},
+      hasBuffered: () => false,
+    };
+    const { replyPayloads } = await buildReplyPayloads({
+      ...baseParams,
+      blockStreamingEnabled: true,
+      blockReplyPipeline: pipeline,
+      replyToMode: "off",
+      payloads: [{ text: "caption", mediaUrls }],
     });
 
     expect(replyPayloads).toHaveLength(0);

@@ -46,6 +46,53 @@ async function normalizeReplyPayloadMedia(params: {
   }
 }
 
+/**
+ * After a successful block stream, keep leftover media instead of dropping the
+ * entire final payload.
+ *
+ * Streaming often delivers the caption first. Tools such as `image_generate`
+ * attach the file on the terminal payload. The previous short-circuit to `[]`
+ * dropped that media, so chats received text-only replies.
+ *
+ * @param payload Final reply payload after directive/media normalization.
+ * @param pipeline Block-streaming pipeline that recorded already-sent content.
+ * @returns The payload to send, a media-only remainder, or `null` when nothing is left.
+ */
+function preserveUnsentMediaAfterBlockSend(
+  payload: ReplyPayload,
+  pipeline: BlockReplyPipeline | null,
+): ReplyPayload | null {
+  if (payload.isError) {
+    return payload;
+  }
+  if (pipeline?.hasSentPayload(payload)) {
+    return null;
+  }
+
+  const reply = resolveSendableOutboundReplyParts(payload);
+  if (!reply.hasMedia) {
+    return payload;
+  }
+  if (!reply.trimmedText) {
+    return payload;
+  }
+
+  const textOnlyPayload: ReplyPayload = {
+    ...payload,
+    mediaUrl: undefined,
+    mediaUrls: undefined,
+    audioAsVoice: undefined,
+  };
+  if (!pipeline?.hasSentPayload(textOnlyPayload)) {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    text: undefined,
+  };
+}
+
 async function normalizeSentMediaUrlsForDedupe(params: {
   sentMediaUrls: string[];
   normalizeMediaPaths?: (payload: ReplyPayload) => Promise<ReplyPayload>;
@@ -212,8 +259,13 @@ export async function buildReplyPayloads(params: {
       })
     : dedupedPayloads;
   // Filter out payloads already sent via pipeline or directly during tool flush.
+  // Successful block streaming used to drop every final payload, including
+  // unsent `image_generate` media that only exists on the terminal reply.
   const filteredPayloads = shouldDropFinalPayloads
-    ? []
+    ? mediaFilteredPayloads.flatMap((payload) => {
+        const preserved = preserveUnsentMediaAfterBlockSend(payload, params.blockReplyPipeline);
+        return preserved && isRenderablePayload(preserved) ? [preserved] : [];
+      })
     : params.blockStreamingEnabled
       ? mediaFilteredPayloads.filter(
           (payload) => !params.blockReplyPipeline?.hasSentPayload(payload),
