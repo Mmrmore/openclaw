@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildReplyPayloads } from "./agent-runner-payloads.js";
+import { createBlockReplyPipeline } from "./block-reply-pipeline.js";
 
 const baseParams = {
   isHeartbeat: false,
@@ -213,6 +214,41 @@ describe("buildReplyPayloads media filter integration", () => {
     expect(replyPayloads[0]).toMatchObject({
       text: undefined,
       mediaUrls: ["/tmp/tool-image-generation/generated.png"],
+    });
+  });
+
+  it("keeps leftover generated media after a real block pipeline streams the caption", async () => {
+    const streamed: Array<{ text?: string; mediaUrls?: string[] }> = [];
+    const pipeline = createBlockReplyPipeline({
+      onBlockReply: async (payload) => {
+        streamed.push({ text: payload.text, mediaUrls: payload.mediaUrls });
+      },
+      timeoutMs: 5000,
+    });
+
+    pipeline.enqueue({ text: "给你一张图" });
+    await pipeline.flush();
+
+    expect(pipeline.didStream()).toBe(true);
+    expect(streamed).toEqual([{ text: "给你一张图", mediaUrls: undefined }]);
+
+    const { replyPayloads } = await buildReplyPayloads({
+      ...baseParams,
+      blockStreamingEnabled: true,
+      blockReplyPipeline: pipeline,
+      replyToMode: "off",
+      payloads: [
+        {
+          text: "给你一张图",
+          mediaUrls: ["/tmp/tool-image-generation/diana.png"],
+        },
+      ],
+    });
+
+    expect(replyPayloads).toHaveLength(1);
+    expect(replyPayloads[0]).toMatchObject({
+      text: undefined,
+      mediaUrls: ["/tmp/tool-image-generation/diana.png"],
     });
   });
 
